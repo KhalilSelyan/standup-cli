@@ -1,0 +1,35 @@
+{
+  "gitScanPath": "/path/to/your/repositories",
+  "authorFilter": "Your Name",
+  "excludeRepos": ["repo-to-exclude", "another-repo"],
+  "skipMergeCommits": true,
+  "customQuestions": {
+    "accomplishments": {
+      "message": "What did you accomplish?",
+      "enabled": true
+    },
+    "blockers": {
+      "message": "Any blockers or questions?",
+      "enabled": true
+    },
+    "todaysPlan": {
+      "message": "What are you working on today?",
+      "enabled": true
+    },
+    "additionalFields": [
+      {
+        "id": "sprint_goal",
+        "message": "Sprint goal progress?",
+        "type": "text"
+      },
+      {
+        "id": "learnings",
+        "message": "What did you learn?",
+        "type": "multiline"
+      }
+    ]
+  },
+  "standupDir": "/path/to/standup/storage",
+  "streakFile": "/path/to/streak.json",
+  "remindersFile": "/path/to/reminders.json"
+}

@@ -1,0 +1,6 @@
+node_modules
+standup
+standups/*.md
+streak.json
+reminders.json
+config.json

@@ -1,0 +1,41 @@
+{
+  "name": "standup-cli",
+  "version": "1.0.0",
+  "description": "A personal productivity tool for tracking daily standups with streak tracking, mood logging, and automated git commit aggregation",
+  "type": "module",
+  "author": "Khalil Selyan",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KhalilSelyan/standup-cli.git"
+  },
+  "keywords": [
+    "standup",
+    "productivity",
+    "cli",
+    "git",
+    "tracking",
+    "streak",
+    "daily",
+    "bun"
+  ],
+  "scripts": {
+    "standup": "bun run src/index.ts",
+    "review": "bun run src/index.ts review",
+    "stats": "bun run src/index.ts stats",
+    "search": "bun run src/index.ts search",
+    "build": "bun build ./src/index.ts --compile --outfile standup",
+    "install:global": "bun run build && sudo cp standup /usr/local/bin/standup"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.11.0",
+    "date-fns": "^4.1.0",
+    "picocolors": "^1.1.1"
+  },
+  "devDependencies": {
+    "bun-types": "latest"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  }
+}
