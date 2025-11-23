@@ -1,5 +1,6 @@
 import { existsSync } from 'fs';
 import { join, basename } from 'path';
+import { format } from 'date-fns';
 import type { Commit, CommitGroup, GitAggregationResult } from './types';
 import { getConfig } from './config';
 
@@ -339,7 +340,8 @@ export function formatCommitsGrouped(groups: CommitGroup[]): string[] {
       const emoji = commit.isUnpushed ? '🚀' : '✅';
       const unpushedMark = commit.isUnpushed ? ' *unpushed*' : '';
       const branchTag = commit.branch ? `[${commit.branch}] ` : '';
-      lines.push(`- ${emoji} ${branchTag}${commit.message}${unpushedMark}`);
+      const timestamp = format(commit.timestamp, 'EEEE d MMMM yyyy HH:mm');
+      lines.push(`- ${emoji} ${branchTag}${commit.message}${unpushedMark} *${timestamp}*`);
     }
 
     lines.push(''); // Empty line between repos
@@ -356,9 +358,10 @@ export function formatCommitsFlat(groups: CommitGroup[]): string[] {
 
   for (const group of groups) {
     for (const commit of group.commits) {
-      const unpushedMark = commit.isUnpushed ? ' *unpushed' : '';
+      const unpushedMark = commit.isUnpushed ? ' *unpushed*' : '';
       const branchTag = commit.branch ? `[${commit.branch}] ` : '';
-      lines.push(`[${group.repoName}] ${branchTag}${commit.message}${unpushedMark}`);
+      const timestamp = format(commit.timestamp, 'EEEE d MMMM yyyy HH:mm');
+      lines.push(`[${group.repoName}] ${branchTag}${commit.message}${unpushedMark} *${timestamp}*`);
     }
   }
 
@@ -379,7 +382,8 @@ export function commitsToAccomplishments(groups: CommitGroup[]): string[] {
 
       const unpushedMark = commit.isUnpushed ? ' (unpushed)' : '';
       const branchTag = commit.branch ? `[${commit.branch}] ` : '';
-      accomplishments.push(`[${group.repoName}] ${branchTag}${message}${unpushedMark}`);
+      const timestamp = format(commit.timestamp, 'EEEE d MMMM yyyy HH:mm');
+      accomplishments.push(`[${group.repoName}] ${branchTag}${message}${unpushedMark} - ${timestamp}`);
     }
   }
 
