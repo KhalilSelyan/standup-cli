@@ -245,3 +245,275 @@ function formatCommitsForPrompt(groups: CommitGroup[]): string {
 
   return lines.join('\n');
 }
+
+/**
+ * Suggest mood based on git commits using AI
+ */
+export async function suggestMood(
+  commitGroups: CommitGroup[],
+  totalCommits: number
+): Promise<string | null> {
+  const commitsText = formatCommitsForPrompt(commitGroups);
+  const analysis = analyzeCommitPatterns(commitGroups);
+
+  const prompt = `You are helping a developer express their mood for their daily standup based on their git activity.
+
+Git commits:
+${commitsText}
+
+Commit analysis:
+- Total commits: ${totalCommits}
+- Types: ${analysis.types.join(', ')}
+- Repositories: ${commitGroups.map(g => g.repoName).join(', ')}
+
+Based on this activity, suggest a mood. Examples:
+- "🚀 Productive - shipping features" (lots of features)
+- "🔧 Bug squashing mode" (lots of fixes)
+- "🎨 Refactoring day" (cleanup/refactor)
+- "🔍 Exploration mode" (experimental commits)
+- "⚡ Multi-tasking across projects" (multiple repos)
+- "💪 Power through - high commit count" (many commits)
+
+Be creative but professional. One emoji + short phrase (under 40 chars).
+
+Return ONLY the mood string, nothing else.`;
+
+  try {
+    const response = await fetch(`${OLLAMA_API_URL}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: OLLAMA_MODEL,
+        prompt,
+        stream: false,
+        options: { temperature: 0.8, num_predict: 50 },
+      }),
+    });
+
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data.response.trim();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Improve accomplishments using AI
+ */
+export async function improveAccomplishments(
+  accomplishments: string[],
+  commitGroups?: CommitGroup[]
+): Promise<string[] | null> {
+  const commitsContext = commitGroups ? `\nGit commits for context:\n${formatCommitsForPrompt(commitGroups)}` : '';
+
+  const prompt = `You are helping improve accomplishment descriptions for a daily standup.
+
+Current accomplishments:
+${accomplishments.map((a, i) => `${i + 1}. ${a}`).join('\n')}
+${commitsContext}
+
+Improve these accomplishments to be:
+- Natural and conversational (past tense, active voice)
+- Specific about WHAT was done and WHY it matters
+- Focused on impact and value
+- Combined if related (but keep separate if distinct)
+- Professional but not overly formal
+- Keep any [repo-name] prefixes as plain text, NOT as array syntax
+
+IMPORTANT: If an accomplishment starts with [repo-name], keep it as a simple string prefix, like:
+"[db-migrations] Updated setup script to use new command for better consistency"
+
+Example transformations:
+- "[repo] Added timestamps" → "[repo] Added human-readable timestamps to git commits so team can see when work was done"
+- "Fixed bug" → "Fixed authentication bug that was preventing users from logging in"
+- "Updated docs" → "Updated API documentation with new endpoint examples for easier integration"
+
+Return as JSON array of strings (NOT nested arrays):
+["improved item 1", "improved item 2", ...]
+
+Return ONLY a valid JSON array. Do not use nested arrays or any markdown formatting.`;
+
+  try {
+    const response = await fetch(`${OLLAMA_API_URL}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: OLLAMA_MODEL,
+        prompt,
+        stream: false,
+        options: { temperature: 0.7, num_predict: 400 },
+      }),
+    });
+
+    if (!response.ok) {
+      if (DEBUG) console.error('[DEBUG] Ollama response not OK:', response.status, response.statusText);
+      return null;
+    }
+    const data = await response.json();
+
+    if (DEBUG) {
+      console.log('[DEBUG] Ollama raw response for improveAccomplishments:', data.response);
+    }
+
+    // Extract JSON array from response
+    let jsonText = data.response.trim();
+    const jsonMatch = jsonText.match(/\[[\s\S]*\]/);
+    if (jsonMatch) {
+      jsonText = jsonMatch[0];
+    }
+
+    if (DEBUG) {
+      console.log('[DEBUG] Extracted JSON text:', jsonText);
+    }
+
+    // Fix common issue: AI outputs ["[repo]" text"] instead of "[[repo] text"
+    // Pattern: "["  at start of string becomes "[
+    // Pattern: "]"  followed by space becomes "]
+    jsonText = jsonText.replace(/"\["/g, '"[').replace(/"\]\s/g, '] ');
+
+    if (DEBUG) {
+      console.log('[DEBUG] After bracket fix:', jsonText);
+    }
+
+    const parsed = JSON.parse(jsonText);
+
+    if (DEBUG) {
+      console.log('[DEBUG] Parsed accomplishments:', parsed);
+    }
+
+    // Ensure result is an array of strings
+    if (Array.isArray(parsed)) {
+      return parsed.map(item => String(item));
+    }
+
+    return parsed;
+  } catch (error) {
+    if (DEBUG) {
+      console.error('[DEBUG] Error in improveAccomplishments:', error);
+    }
+    return null;
+  }
+}
+
+/**
+ * Suggest potential blockers based on commit patterns
+ */
+export async function suggestBlockers(
+  commitGroups: CommitGroup[]
+): Promise<string[] | null> {
+  const commitsText = formatCommitsForPrompt(commitGroups);
+  const analysis = analyzeCommitPatterns(commitGroups);
+
+  const prompt = `You are analyzing git commits to identify potential blockers or challenges.
+
+Git commits:
+${commitsText}
+
+Patterns detected:
+- Has fixes: ${analysis.hasFixes}
+- Has WIP commits: ${analysis.hasWIP}
+- Commit types: ${analysis.types.join(', ')}
+
+Analyze for potential blockers:
+- Lots of fixes → dealing with technical debt or bugs
+- WIP commits → work is incomplete or exploratory
+- Multiple attempts at same thing → stuck on something
+- Reverts → hit a roadblock
+- Otherwise → "None"
+
+Return potential blockers as JSON array. If no blockers, return ["None"].
+Be specific but concise (under 60 chars each).
+
+Examples:
+["Dealing with flaky tests in authentication module"]
+["API rate limiting causing integration issues"]
+["None"]
+
+Return ONLY the JSON array, nothing else.`;
+
+  try {
+    const response = await fetch(`${OLLAMA_API_URL}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: OLLAMA_MODEL,
+        prompt,
+        stream: false,
+        options: { temperature: 0.6, num_predict: 200 },
+      }),
+    });
+
+    if (!response.ok) return null;
+    const data = await response.json();
+
+    let jsonText = data.response.trim();
+    const jsonMatch = jsonText.match(/\[[\s\S]*\]/);
+    if (jsonMatch) {
+      jsonText = jsonMatch[0];
+    }
+
+    return JSON.parse(jsonText);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Suggest today's plan based on recent work
+ */
+export async function suggestTodaysPlan(
+  commitGroups: CommitGroup[],
+  accomplishments?: string[]
+): Promise<string[] | null> {
+  const commitsText = formatCommitsForPrompt(commitGroups);
+  const analysis = analyzeCommitPatterns(commitGroups);
+  const accompContext = accomplishments ? `\nAccomplishments:\n${accomplishments.map((a, i) => `${i + 1}. ${a}`).join('\n')}` : '';
+
+  const prompt = `You are suggesting logical next steps for a developer's work plan based on their recent activity.
+
+Git commits:
+${commitsText}${accompContext}
+
+Patterns:
+- Commit types: ${analysis.types.join(', ')}
+- Has unpushed work: ${commitGroups.some(g => g.commits.some(c => c.isUnpushed))}
+
+Based on recent work, suggest 2-3 specific, actionable next steps:
+- If features: "Continue development on X" or "Test and deploy Y"
+- If fixes: "Monitor for related issues" or "Add regression tests"
+- If refactor: "Document changes" or "Complete refactoring in Z"
+- If WIP: "Finish X implementation" or "Review and clean up Y"
+- Be specific to what was actually worked on
+
+Return as JSON array of 2-3 items (each under 60 chars):
+["specific task 1", "specific task 2", "specific task 3"]
+
+Return ONLY the JSON array, nothing else.`;
+
+  try {
+    const response = await fetch(`${OLLAMA_API_URL}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: OLLAMA_MODEL,
+        prompt,
+        stream: false,
+        options: { temperature: 0.7, num_predict: 250 },
+      }),
+    });
+
+    if (!response.ok) return null;
+    const data = await response.json();
+
+    let jsonText = data.response.trim();
+    const jsonMatch = jsonText.match(/\[[\s\S]*\]/);
+    if (jsonMatch) {
+      jsonText = jsonMatch[0];
+    }
+
+    return JSON.parse(jsonText);
+  } catch {
+    return null;
+  }
+}

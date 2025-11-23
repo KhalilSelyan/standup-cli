@@ -22,7 +22,14 @@ import {
   checkClipboardAvailable,
   getClipboardToolsMessage,
 } from './errorHandling';
-import { generateStandupSummary, isOllamaAvailable } from './aiSummarizer';
+import {
+  generateStandupSummary,
+  isOllamaAvailable,
+  suggestMood,
+  improveAccomplishments,
+  suggestBlockers,
+  suggestTodaysPlan
+} from './aiSummarizer';
 import { generateSimpleSummary } from './simpleSummarizer';
 
 // Load config at startup
@@ -308,7 +315,23 @@ async function runAutoStandup() {
   if (existsSync(todayFile)) {
     console.log(pc.yellow('⚠️  Standup already exists for today'));
     console.log(pc.dim(`File: ${todayFile}`));
-    process.exit(1);
+
+    const existingContent = await Bun.file(todayFile).text();
+    console.log('\n' + pc.dim('--- Existing standup ---'));
+    console.log(existingContent);
+    console.log(pc.dim('--- End of standup ---\n'));
+
+    const shouldOverwrite = await p.confirm({
+      message: 'Do you want to overwrite this standup?',
+      initialValue: false,
+    });
+
+    if (p.isCancel(shouldOverwrite) || !shouldOverwrite) {
+      console.log(pc.cyan('Keeping existing standup.'));
+      process.exit(0);
+    }
+
+    console.log(pc.yellow('Overwriting existing standup...\n'));
   }
 
   try {
@@ -533,63 +556,7 @@ async function runStandup() {
     const lastStandup = await getLastStandup();
     const smartDateMessage = getSmartDateMessage(lastStandup?.date || null);
 
-    // Question 1: Mood
-    let mood: any;
-    let moodLabel: string;
-    const moodOptions = [
-      { value: '🔥', label: 'Amazing - On fire!' },
-      { value: '😊', label: 'Good - Feeling productive' },
-      { value: '😐', label: 'Okay - Just another day' },
-      { value: '😔', label: 'Struggling - Need support' },
-      { value: '😫', label: 'Burnt out - Need a break' },
-      { value: 'custom', label: '✏️  Custom mood', hint: 'Write your own' },
-    ];
-
-    while (true) {
-      const moodChoice = await p.select({
-        message: 'How are you feeling today?',
-        options: moodOptions,
-      });
-
-      if (p.isCancel(moodChoice)) {
-        p.cancel('Standup cancelled');
-        process.exit(0);
-      }
-
-      if (moodChoice === 'custom') {
-        // Custom mood input
-        const customMood = await p.text({
-          message: 'Describe your mood:',
-          placeholder: 'e.g., Excited about new project, Tired but motivated...',
-        });
-
-        if (p.isCancel(customMood)) {
-          p.cancel('Standup cancelled');
-          process.exit(0);
-        }
-
-        mood = '';
-        moodLabel = String(customMood || '').trim() || 'No mood specified';
-      } else {
-        mood = moodChoice;
-        moodLabel = moodOptions.find(opt => opt.value === moodChoice)?.label || 'Unknown';
-      }
-
-      const displayMood = mood ? `${mood} ${moodLabel}` : moodLabel;
-      const confirmation = await confirmAnswer('Mood:', displayMood);
-
-      if (confirmation === 'restart') {
-        restart = true;
-        break;
-      } else if (confirmation === 'yes') {
-        break;
-      }
-      // If 'edit', loop continues
-    }
-
-    if (restart) continue;
-
-    // Scan git repositories for commits
+    // Scan git repositories for commits FIRST (so we can use AI suggestions)
     let gitResult: GitAggregationResult | null = null;
     let gitAccomplishments: string[] = [];
 
@@ -702,6 +669,87 @@ async function runStandup() {
       } // end if gitInstalled
     }
 
+    // Question 1: Mood
+    let mood: any;
+    let moodLabel: string;
+    const moodOptions = [
+      { value: '🔥', label: 'Amazing - On fire!' },
+      { value: '😊', label: 'Good - Feeling productive' },
+      { value: '😐', label: 'Okay - Just another day' },
+      { value: '😔', label: 'Struggling - Need support' },
+      { value: '😫', label: 'Burnt out - Need a break' },
+      { value: 'custom', label: '✏️  Custom mood', hint: 'Write your own' },
+    ];
+
+    // Try to suggest AI mood if we have git commits and AI is enabled
+    let aiSuggestedMood: string | null = null;
+    if (config.enableAI && gitResult && gitResult.totalCommits > 0) {
+      const ollamaReady = await isOllamaAvailable();
+      if (ollamaReady) {
+        try {
+          aiSuggestedMood = await suggestMood(gitResult.groups, gitResult.totalCommits);
+          if (aiSuggestedMood) {
+            // Add AI suggestion as first option
+            moodOptions.unshift({
+              value: 'ai-suggestion',
+              label: aiSuggestedMood,
+              hint: '🤖 AI suggested'
+            });
+          }
+        } catch {
+          // AI failed, continue without suggestion
+        }
+      }
+    }
+
+    while (true) {
+      const moodChoice = await p.select({
+        message: 'How are you feeling today?',
+        options: moodOptions,
+      });
+
+      if (p.isCancel(moodChoice)) {
+        p.cancel('Standup cancelled');
+        process.exit(0);
+      }
+
+      if (moodChoice === 'ai-suggestion') {
+        // User selected AI suggestion
+        mood = '';
+        moodLabel = aiSuggestedMood || 'AI suggested';
+      } else if (moodChoice === 'custom') {
+        // Custom mood input
+        const customMood = await p.text({
+          message: 'Describe your mood:',
+          placeholder: 'e.g., Excited about new project, Tired but motivated...',
+        });
+
+        if (p.isCancel(customMood)) {
+          p.cancel('Standup cancelled');
+          process.exit(0);
+        }
+
+        mood = '';
+        moodLabel = String(customMood || '').trim() || 'No mood specified';
+      } else {
+        mood = moodChoice;
+        moodLabel = moodOptions.find(opt => opt.value === moodChoice)?.label || 'Unknown';
+      }
+
+      const displayMood = mood ? `${mood} ${moodLabel}` : moodLabel;
+      const confirmation = await confirmAnswer('Mood:', displayMood);
+
+      if (confirmation === 'restart') {
+        restart = true;
+        break;
+      } else if (confirmation === 'yes') {
+        break;
+      }
+      // If 'edit', loop continues
+    }
+
+    if (restart) continue;
+
     // Question 2: Accomplishments (multi-line)
     const customQuestions = config.customQuestions!;
     let accomplishments: string[];
@@ -723,27 +771,85 @@ async function runStandup() {
         if (useGitCommits) {
           accomplishments = [...gitAccomplishments];
 
-          // Show preview and allow editing
-          const preview = accomplishments.join('\n- ');
-          p.note(preview, 'Pre-filled from git commits');
+          // Inner loop for handling git commit options
+          while (true) {
+            // Show preview and allow editing
+            const preview = accomplishments.join('\n- ');
+            p.note(preview, 'Pre-filled from git commits');
 
-          const editChoice = await p.select({
-            message: 'What would you like to do?',
-            options: [
+            // Build options for what to do with git commits
+            const gitCommitOptions = [
               { value: 'keep', label: 'Keep as is' },
               { value: 'add', label: 'Add more items' },
               { value: 'edit', label: 'Start over manually' },
-            ],
-          });
+            ];
 
-          if (p.isCancel(editChoice)) {
-            p.cancel('Standup cancelled');
-            process.exit(0);
-          }
+            // Add AI improve option if AI is enabled
+            if (config.enableAI) {
+              const ollamaReady = await isOllamaAvailable();
+              if (ollamaReady) {
+                gitCommitOptions.splice(1, 0, {
+                  value: 'ai-improve',
+                  label: '🤖 AI improve descriptions',
+                  hint: 'Make them more impactful'
+                });
+              }
+            }
 
-          if (editChoice === 'keep') {
-            break;
-          } else if (editChoice === 'add') {
+            const editChoice = await p.select({
+              message: 'What would you like to do?',
+              options: gitCommitOptions,
+            });
+
+            if (p.isCancel(editChoice)) {
+              p.cancel('Standup cancelled');
+              process.exit(0);
+            }
+
+            if (editChoice === 'keep') {
+              break;
+            } else if (editChoice === 'ai-improve') {
+              // AI improve accomplishments
+              const spinner = p.spinner();
+              spinner.start(pc.cyan('AI is improving your accomplishments...'));
+
+              try {
+                const improved = await improveAccomplishments(accomplishments, gitResult?.groups);
+                spinner.stop(pc.green('✓ AI suggestions ready'));
+
+                if (improved && improved.length > 0) {
+                  accomplishments = improved;
+                  const improvedPreview = accomplishments.join('\n- ');
+                  p.note(improvedPreview, pc.magenta('🤖 AI-improved accomplishments'));
+
+                  const acceptImproved = await p.confirm({
+                    message: 'Use these AI-improved descriptions?',
+                    initialValue: true,
+                  });
+
+                  if (p.isCancel(acceptImproved)) {
+                    p.cancel('Standup cancelled');
+                    process.exit(0);
+                  }
+
+                  if (acceptImproved) {
+                    break;
+                  }
+                  // If not accepted, loop continues to show options again
+                } else {
+                  spinner.stop(pc.yellow('⚠️  AI improvement failed'));
+                  p.log.warn('Could not improve accomplishments, keeping originals');
+                  // Loop back to show options menu again
+                }
+              } catch (error) {
+                spinner.stop(pc.red('✗ AI failed'));
+                p.log.warn('AI improvement failed, keeping originals');
+                if (DEBUG) {
+                  console.error('[DEBUG] AI improvement error:', error);
+                }
+                // Loop back to show options menu again
+              }
+            } else if (editChoice === 'add') {
             // Add more items to existing
             while (true) {
               const item = await p.text({
@@ -771,8 +877,16 @@ async function runStandup() {
               }
             }
             break;
+            } else if (editChoice === 'edit') {
+              // Break out of both loops to go to manual entry
+              break;
+            }
+          } // end inner while loop for git commit options
+
+          // If user chose 'edit', break out to manual entry
+          if (accomplishments.length > 0) {
+            break; // Break outer loop, we have accomplishments
           }
-          // If 'edit', fall through to manual entry
         }
       }
 
@@ -805,8 +919,56 @@ async function runStandup() {
 
     // Question 3: Blockers (multi-line)
     let blockers: string[];
+    let blockersSet = false;
     if (customQuestions.blockers?.enabled !== false) {
-      while (true) {
+      // Try to suggest blockers with AI if enabled and we have git data
+      if (config.enableAI && gitResult && gitResult.totalCommits > 0) {
+        const ollamaReady = await isOllamaAvailable();
+        if (ollamaReady) {
+          try {
+            const spinner = p.spinner();
+            spinner.start(pc.cyan('AI is analyzing for potential blockers...'));
+            const aiSuggestedBlockers = await suggestBlockers(gitResult.groups);
+            spinner.stop(pc.green('✓ Analysis complete'));
+
+            if (aiSuggestedBlockers && aiSuggestedBlockers.length > 0 && aiSuggestedBlockers[0] !== 'None') {
+              p.note(aiSuggestedBlockers.map(b => `- ${b}`).join('\n'), pc.yellow('🤖 AI detected potential blockers'));
+
+              const useAiBlockers = await p.confirm({
+                message: 'Use these AI-detected blockers?',
+                initialValue: false,
+              });
+
+              if (p.isCancel(useAiBlockers)) {
+                p.cancel('Standup cancelled');
+                process.exit(0);
+              }
+
+              if (useAiBlockers) {
+                blockers = aiSuggestedBlockers;
+                const preview = blockers.join('\n- ');
+                const confirmation = await confirmAnswer('Blockers:', preview);
+
+                if (confirmation === 'restart') {
+                  restart = true;
+                } else if (confirmation === 'yes') {
+                  blockersSet = true;
+                }
+                // If 'edit', continue to manual entry below
+              }
+            }
+          } catch {
+            // AI failed, continue to manual entry
+          }
+        }
+      }
+
+      if (restart) {
+        continue;
+      }
+
+      if (!blockersSet) {
+        while (true) {
         const result = await askMultiLineQuestion(
           customQuestions.blockers?.message || 'Any blockers or help needed?',
           'Describe blockers, or press Enter for none...'
@@ -828,6 +990,7 @@ async function runStandup() {
         break;
       }
     }
+      }
 
     if (restart) continue;
     } else {
@@ -836,8 +999,56 @@ async function runStandup() {
 
     // Question 4: Today's plan (multi-line)
     let todaysPlan: string[];
+    let planSet = false;
     if (customQuestions.todaysPlan?.enabled !== false) {
-      while (true) {
+      // Try to suggest today's plan with AI if enabled and we have git data
+      if (config.enableAI && gitResult && gitResult.totalCommits > 0) {
+        const ollamaReady = await isOllamaAvailable();
+        if (ollamaReady) {
+          try {
+            const spinner = p.spinner();
+            spinner.start(pc.cyan('AI is suggesting next steps...'));
+            const aiSuggestedPlan = await suggestTodaysPlan(gitResult.groups, accomplishments);
+            spinner.stop(pc.green('✓ Suggestions ready'));
+
+            if (aiSuggestedPlan && aiSuggestedPlan.length > 0) {
+              p.note(aiSuggestedPlan.map(p => `- ${p}`).join('\n'), pc.blue('🤖 AI suggested plan'));
+
+              const useAiPlan = await p.confirm({
+                message: 'Use these AI suggestions for today\'s plan?',
+                initialValue: true,
+              });
+
+              if (p.isCancel(useAiPlan)) {
+                p.cancel('Standup cancelled');
+                process.exit(0);
+              }
+
+              if (useAiPlan) {
+                todaysPlan = aiSuggestedPlan;
+                const preview = todaysPlan.join('\n- ');
+                const confirmation = await confirmAnswer("Today's Plan:", preview);
+
+                if (confirmation === 'restart') {
+                  restart = true;
+                } else if (confirmation === 'yes') {
+                  planSet = true;
+                }
+                // If 'edit', continue to manual entry below
+              }
+            }
+          } catch {
+            // AI failed, continue to manual entry
+          }
+        }
+      }
+
+      if (restart) {
+        continue;
+      }
+
+      if (!planSet) {
+        while (true) {
         const result = await askMultiLineQuestion(
           customQuestions.todaysPlan?.message || 'What will you focus on today?',
           'Describe your priorities for today...'
@@ -859,6 +1070,7 @@ async function runStandup() {
         break;
       }
     }
+      }
 
     if (restart) continue;
     } else {
