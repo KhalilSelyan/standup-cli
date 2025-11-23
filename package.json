@@ -1,6 +1,6 @@
 {
   "name": "standup-cli",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "A personal productivity tool for tracking daily standups with streak tracking, mood logging, and automated git commit aggregation",
   "type": "module",
   "author": "Khalil Selyan",

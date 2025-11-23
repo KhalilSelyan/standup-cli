@@ -1277,7 +1277,7 @@ if (command === '--help' || command === '-h') {
 
 if (command === '--version' || command === '-v') {
   // Hardcode version to avoid path issues in compiled binary
-  console.log(`standup-cli v1.0.0`);
+  console.log(`standup-cli v2.0.0`);
   process.exit(0);
 }
 
