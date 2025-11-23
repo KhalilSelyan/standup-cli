@@ -128,6 +128,91 @@ function getSmartDateMessage(lastStandupDate: Date | null): string {
   return 'What did you accomplish today so far?';
 }
 
+/**
+ * Generate smart time range options based on current day of week
+ */
+function getSmartTimeRangeOptions() {
+  const now = new Date();
+  const currentDay = now.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  const options = [];
+
+  // Helper to calculate hours since a specific day of week
+  const hoursSinceDay = (targetDay: number): number => {
+    let daysAgo = currentDay - targetDay;
+    if (daysAgo <= 0) daysAgo += 7; // If target is in future this week, go back to last week
+    return daysAgo * 24;
+  };
+
+  // Determine which option should be recommended based on current day
+  const getRecommendedDay = (): number => {
+    if (currentDay === 1) return 5; // Monday → Friday
+    if (currentDay === 2 || currentDay === 3) return 1; // Tue/Wed → Monday
+    if (currentDay === 4 || currentDay === 5) return 1; // Thu/Fri → Monday
+    if (currentDay === 6 || currentDay === 0) return 5; // Weekend → Friday
+    return -1; // No recommendation
+  };
+
+  const recommendedDay = getRecommendedDay();
+
+  // Build all weekday options first
+  const weekdays = [
+    { day: 1, name: 'Monday' },
+    { day: 2, name: 'Tuesday' },
+    { day: 3, name: 'Wednesday' },
+    { day: 4, name: 'Thursday' },
+    { day: 5, name: 'Friday' },
+  ];
+
+  const weekdayOptions = [];
+  let recommendedOption = null;
+
+  for (const { day, name } of weekdays) {
+    const hours = hoursSinceDay(day);
+    // Only show if it's actually in the past (not today)
+    if (hours > 0 && hours <= 168) {
+      const option = {
+        value: String(hours),
+        label: `Since ${name}`,
+        hint: day === recommendedDay ? 'Recommended' : '',
+      };
+
+      if (day === recommendedDay) {
+        recommendedOption = option;
+      } else {
+        weekdayOptions.push(option);
+      }
+    }
+  }
+
+  // Add recommended option first if it exists
+  if (recommendedOption) {
+    options.push(recommendedOption);
+  }
+
+  // Add yesterday
+  options.push({
+    value: '24',
+    label: 'Since yesterday',
+  });
+
+  // Add remaining weekday options
+  options.push(...weekdayOptions);
+
+  // Offer last week
+  options.push({
+    value: '168',
+    label: 'Last week (7 days)',
+  });
+
+  // Custom option
+  options.push({
+    value: 'custom',
+    label: 'Custom hours',
+  });
+
+  return options;
+}
+
 async function askMultiLineQuestion(message: string, placeholder: string): Promise<string[] | symbol> {
   const items: string[] = [];
 
@@ -344,23 +429,10 @@ async function runStandup() {
             // Continue without git scan
           } else {
 
-        // Calculate suggested time range based on last standup
-        let suggestedHours = 48;
-        if (lastStandup?.date) {
-          const daysSinceLastStandup = differenceInDays(new Date(), lastStandup.date);
-          suggestedHours = Math.max(48, (daysSinceLastStandup * 24) + 12);
-        }
-
-        // Ask user for time range
+        // Ask user for time range with smart day-based options
         const timeRange = await p.select({
           message: 'How far back to scan for commits?',
-          options: [
-            { value: '12', label: 'Last 12 hours' },
-            { value: '24', label: 'Last 24 hours' },
-            { value: '48', label: 'Last 48 hours', hint: suggestedHours === 48 ? 'Recommended' : '' },
-            { value: String(suggestedHours), label: `Since last standup (~${suggestedHours}h)`, hint: suggestedHours !== 48 ? 'Recommended' : '' },
-            { value: 'custom', label: 'Custom hours' },
-          ],
+          options: getSmartTimeRangeOptions(),
         });
 
         if (p.isCancel(timeRange)) {
