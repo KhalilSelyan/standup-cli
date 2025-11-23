@@ -29,6 +29,7 @@ export interface StandupConfig {
   excludeRepos?: string[]; // Repository names to exclude from scanning
   skipMergeCommits?: boolean; // Skip merge commits in git log
   customQuestions?: CustomQuestions; // Customize standup questions
+  enableAI?: boolean; // Enable AI-powered summaries (requires Ollama)
   standupDir: string;
   streakFile: string;
   remindersFile: string;
@@ -120,6 +121,7 @@ export async function loadConfig(): Promise<StandupConfig> {
     excludeRepos: fileConfig.excludeRepos ?? [],
     skipMergeCommits: fileConfig.skipMergeCommits ?? false,
     customQuestions: fileConfig.customQuestions ?? defaultCustomQuestions,
+    enableAI: fileConfig.enableAI ?? false, // AI is opt-in
     standupDir: fileConfig.standupDir ?? DEFAULT_STANDUP_DIR,
     streakFile: fileConfig.streakFile ?? DEFAULT_STREAK_FILE,
     remindersFile: fileConfig.remindersFile ?? DEFAULT_REMINDERS_FILE,

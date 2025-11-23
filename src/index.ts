@@ -22,6 +22,8 @@ import {
   checkClipboardAvailable,
   getClipboardToolsMessage,
 } from './errorHandling';
+import { generateStandupSummary, isOllamaAvailable } from './aiSummarizer';
+import { generateSimpleSummary } from './simpleSummarizer';
 
 // Load config at startup
 const config = await loadConfig();
@@ -287,6 +289,189 @@ async function confirmAnswer(question: string, answer: string): Promise<'yes' | 
   }
 
   return choice as 'yes' | 'edit' | 'restart';
+}
+
+async function runAutoStandup() {
+  // Check if standup for today already exists
+  const today = format(new Date(), 'yyyy-MM-dd');
+  const todayFile = join(STANDUP_DIR, `${today}.md`);
+
+  if (existsSync(todayFile)) {
+    console.log(pc.yellow('⚠️  Standup already exists for today'));
+    console.log(pc.dim(`File: ${todayFile}`));
+    process.exit(1);
+  }
+
+  try {
+    // Auto-detect time range based on day of week
+    const now = new Date();
+    const currentDay = now.getDay(); // 0 = Sunday, 1 = Monday, etc.
+
+    // If Monday, go back to Friday (72 hours). Otherwise, yesterday (24 hours)
+    const hoursToGoBack = currentDay === 1 ? 72 : 24;
+    const sinceDate = new Date(Date.now() - hoursToGoBack * 60 * 60 * 1000);
+
+    // Check git installation
+    const gitInstalled = await checkGitInstalled();
+    if (!gitInstalled) {
+      console.log(pc.red('✗ Git not found. Cannot scan commits.'));
+      console.log(getGitInstallMessage());
+      process.exit(1);
+    }
+
+    // Scan git repositories
+    const repos = await findGitRepositories();
+    if (repos.length === 0) {
+      console.log(pc.yellow('⚠️  No git repositories found'));
+      console.log(getNoReposFoundMessage(config.gitScanPath));
+      process.exit(1);
+    }
+
+    const gitResult = await aggregateCommits(repos, sinceDate);
+
+    if (gitResult.totalCommits === 0) {
+      console.log(pc.yellow('⚠️  No commits found in the time range'));
+      console.log(pc.dim(`Scanned since: ${format(sinceDate, 'EEEE d MMMM yyyy HH:mm')}`));
+      process.exit(1);
+    }
+
+    // Generate summary (AI if enabled and available, otherwise simple)
+    const date = new Date();
+    const context = {
+      dayOfWeek: format(date, 'EEEE'),
+      isWeekend: date.getDay() === 0 || date.getDay() === 6,
+      hour: date.getHours(),
+    };
+
+    let summary;
+    let usedAI = false;
+
+    // Try AI if enabled in config
+    if (config.enableAI) {
+      const ollamaReady = await isOllamaAvailable();
+
+      if (ollamaReady) {
+        console.log(pc.cyan(`✓ Found ${gitResult.totalCommits} commits, generating AI summary...`));
+        try {
+          summary = await generateStandupSummary(gitResult.groups, gitResult.totalCommits, context);
+          usedAI = true;
+        } catch (error) {
+          console.log(pc.yellow(`⚠️  AI summary failed, using simple summary`));
+          if (process.env.DEBUG === 'true') {
+            console.error(error);
+          }
+        }
+      } else {
+        console.log(pc.yellow(`⚠️  Ollama not available, using simple summary`));
+        console.log(pc.dim(`   To enable AI: Install Ollama and run 'ollama pull qwen2.5:7b'`));
+      }
+    }
+
+    // Fallback to simple summary
+    if (!summary) {
+      console.log(pc.cyan(`✓ Found ${gitResult.totalCommits} commits, generating summary...`));
+      summary = generateSimpleSummary(gitResult.groups, gitResult.totalCommits, context);
+    }
+
+    // Build markdown file
+    const filename = `${format(date, 'yyyy-MM-dd')}.md`;
+    const filepath = join(STANDUP_DIR, filename);
+
+    const formatList = (items: string[]) => {
+      if (items.length === 1 && items[0] === 'None') return 'None';
+      return items.map(item => `- ${item}`).join('\n');
+    };
+
+    // Add detailed git activity section (collapsed/optional)
+    const formatted = formatCommitsGrouped(gitResult.groups);
+    const gitActivitySection = `\n## 📊 Git Summary\n\n${summary.gitSummary}\n\n<details>
+<summary>📦 Detailed Git Activity (${gitResult.totalCommits} commits)</summary>
+
+${formatted.join('\n')}
+
+</details>\n`;
+
+    const markdown = `# Standup - ${format(date, 'EEEE, MMMM do, yyyy')}
+
+## 😊 Mood
+
+${summary.mood}
+
+## ✅ Accomplishments
+
+${formatList(summary.accomplishments)}
+
+## 🚧 Blockers
+
+${formatList(summary.blockers)}
+
+## 📋 Today's Plan
+
+${formatList(summary.todaysPlan)}
+${gitActivitySection}
+---
+
+*Generated automatically at ${format(date, 'HH:mm:ss')}*
+`;
+
+    // Save to file
+    await Bun.write(filepath, markdown);
+
+    // Update streak
+    const updatedStreak = await updateStreak();
+
+    // Copy to clipboard
+    let clipboardSuccess = false;
+    const clipboardCheck = await checkClipboardAvailable();
+
+    if (clipboardCheck.available) {
+      try {
+        const clipboardTools = [
+          ['wl-copy'],
+          ['xclip', '-selection', 'clipboard'],
+          ['xsel', '--clipboard']
+        ];
+
+        for (const tool of clipboardTools) {
+          try {
+            const proc = Bun.spawn(tool, {
+              stdin: 'pipe',
+              stdout: 'ignore',
+              stderr: 'ignore',
+            });
+            proc.stdin.write(markdown);
+            proc.stdin.end();
+            await proc.exited;
+            if (proc.exitCode === 0) {
+              clipboardSuccess = true;
+              break;
+            }
+          } catch {
+            continue;
+          }
+        }
+      } catch {
+        // Clipboard failed, that's ok
+      }
+    }
+
+    // Show success message
+    const streakEmoji = updatedStreak.current >= 7 ? '🔥' : updatedStreak.current >= 3 ? '⚡' : '✨';
+    const aiStatus = usedAI ? pc.magenta(' (AI-powered)') : '';
+    console.log(pc.green(`✓ Standup generated successfully${aiStatus}`));
+    console.log(pc.green(`${streakEmoji} Streak: ${updatedStreak.current} days`) + pc.gray(` (Longest: ${updatedStreak.longest})`));
+
+    if (clipboardSuccess) {
+      console.log(pc.cyan('📋 Copied to clipboard'));
+    }
+
+    console.log(pc.dim(`Saved to: ${filepath}`));
+
+  } catch (error) {
+    console.error(pc.red('✗ Failed to generate standup'));
+    console.error(pc.red(String(error)));
+    process.exit(1);
+  }
 }
 
 async function runStandup() {
@@ -1012,11 +1197,11 @@ function showHelp() {
   console.log('');
 
   p.log.step(pc.bold(pc.yellow('Commands:')));
-  console.log(`  ${pc.cyan('•')} ${pc.bold('(no args)')}    ${pc.dim('Show interactive menu to choose action')}`);
-  console.log(`  ${pc.cyan('•')} ${pc.bold('standup')}      ${pc.dim('Run daily standup (create new entry)')}`);
-  console.log(`  ${pc.cyan('•')} ${pc.bold('stats')}        ${pc.dim('View standup statistics and streaks')}`);
-  console.log(`  ${pc.cyan('•')} ${pc.bold('search')}       ${pc.dim('Search past standups by keyword or date')}`);
-  console.log(`  ${pc.cyan('•')} ${pc.bold('review')}       ${pc.dim('View weekly summary of standups')}`);
+  console.log(`  ${pc.cyan('•')} ${pc.bold('(no args)')}          ${pc.dim('AI-powered auto standup (non-interactive)')}`);
+  console.log(`  ${pc.cyan('•')} ${pc.bold('interactive, -i')}    ${pc.dim('Interactive standup with prompts')}`);
+  console.log(`  ${pc.cyan('•')} ${pc.bold('stats')}              ${pc.dim('View standup statistics and streaks')}`);
+  console.log(`  ${pc.cyan('•')} ${pc.bold('search')}             ${pc.dim('Search past standups by keyword or date')}`);
+  console.log(`  ${pc.cyan('•')} ${pc.bold('review')}             ${pc.dim('View weekly summary of standups')}`);
   console.log('');
 
   p.log.step(pc.bold(pc.blue('Flags:')));
@@ -1026,13 +1211,13 @@ function showHelp() {
   console.log('');
 
   p.log.step(pc.bold(pc.green('Examples:')));
-  console.log(`  ${pc.gray('$')} ${pc.cyan('standup')}              ${pc.dim('→ Interactive menu')}`);
-  console.log(`  ${pc.gray('$')} ${pc.cyan('standup stats')}        ${pc.dim('→ View statistics')}`);
-  console.log(`  ${pc.gray('$')} ${pc.cyan('standup --version')}    ${pc.dim('→ Show version')}`);
-  console.log(`  ${pc.gray('$')} ${pc.cyan('standup --migrate')}    ${pc.dim('→ Migrate old data')}`);
+  console.log(`  ${pc.gray('$')} ${pc.cyan('standup')}                ${pc.dim('→ AI auto mode (default)')}`);
+  console.log(`  ${pc.gray('$')} ${pc.cyan('standup interactive')}    ${pc.dim('→ Interactive prompts')}`);
+  console.log(`  ${pc.gray('$')} ${pc.cyan('standup stats')}          ${pc.dim('→ View statistics')}`);
+  console.log(`  ${pc.gray('$')} ${pc.cyan('standup --version')}      ${pc.dim('→ Show version')}`);
   console.log('');
 
-  p.outro(pc.bgGreen(pc.black(' 🚀 Run without arguments for interactive menu! ')));
+  p.outro(pc.bgGreen(pc.black(' 🤖 AI auto mode is the default - perfect for automation! ')));
 }
 
 async function showMenu() {
@@ -1093,14 +1278,16 @@ if (command === '--migrate' || command === '-m') {
 }
 
 // Check for migration on first run (before running any commands)
-if (!command || command === 'standup') {
+if (!command || command === 'interactive' || command === '-i') {
   await promptMigrationIfNeeded();
 }
 
 if (command) {
   // Direct command mode
   switch (command) {
-    case 'standup':
+    case 'interactive':
+    case '-i':
+      // Interactive mode (old default behavior)
       await runStandup();
       break;
     case 'stats':
@@ -1118,24 +1305,6 @@ if (command) {
       process.exit(1);
   }
 } else {
-  // Interactive menu mode
-  const choice = await showMenu();
-
-  switch (choice) {
-    case 'standup':
-      await runStandup();
-      break;
-    case 'stats':
-      await showStats();
-      break;
-    case 'search':
-      await searchStandups();
-      break;
-    case 'review':
-      await weeklyReview();
-      break;
-    case 'exit':
-      p.outro('Goodbye! 👋');
-      break;
-  }
+  // No command = auto mode (AI-powered non-interactive)
+  await runAutoStandup();
 }
