@@ -1,18 +1,22 @@
-# 📋 Daily Standup CLI
+# 📋 Daily Standup CLI v2.0
 
 A personal productivity tool for tracking daily standups with streak tracking, mood logging, and automated git commit aggregation. Built with Bun and TypeScript.
 
+**New in v2.0:** AI-powered auto mode with optional Ollama integration for intelligent standup summaries!
+
 ## ✨ Features
 
-- 📝 **Interactive Standup Creation** - Guided prompts for accomplishments, blockers, and today's plan
+- 🤖 **AI-Powered Auto Mode** - Intelligent standup generation using local LLMs (optional Ollama)
+- 🎯 **Simple Fallback Mode** - Works out-of-the-box without any AI setup
+- 📝 **Interactive Mode** - Manual guided prompts when you need full control
 - 🔥 **Streak Tracking** - Monitor your consistency with current and longest streak counters
-- 😊 **Mood Logging** - Track your daily mood with emoji options
-- 🔗 **Git Integration** - Automatically scan repositories and aggregate commits as accomplishments
+- 😊 **Smart Mood Detection** - Auto-infers mood from commit patterns (🚀/🔧/🎨/⚡)
+- 🔗 **Git Integration** - Smart time ranges ("Since Friday" on Monday) with readable timestamps
 - 📊 **Statistics & Analytics** - View standup history, mood distribution, and trends
 - 🔍 **Search Functionality** - Search past standups by keyword or date range
 - 📅 **Weekly Reviews** - Generate summaries of your week's standups
 - 🔔 **Smart Reminders** - Optional systemd integration for scheduled notifications
-- ⚙️ **Configurable** - Customize paths and author filtering via config file
+- ⚙️ **Auto-Configuration** - Creates default config on first run
 - 📋 **Clipboard Integration** - Auto-copy to clipboard (supports wl-copy, xclip, xsel)
 
 ## 📦 Installation
@@ -43,27 +47,39 @@ After global installation, you can run `standup` from anywhere.
 
 ## 🚀 Usage
 
-### Interactive Mode
+### Auto Mode (Default - v2.0)
 
-Run without arguments to access the interactive menu:
+Run without arguments for AI-powered auto standup generation:
 
 ```bash
-standup
+standup            # Auto mode: non-interactive, AI-enhanced (if enabled)
 ```
 
-### Direct Commands
+**How it works:**
+1. Auto-detects time range (yesterday, or Friday if Monday)
+2. Scans git repos for commits
+3. Generates intelligent summary (AI if enabled, otherwise smart text-based)
+4. Saves to file and copies to clipboard
+5. Perfect for automation (systemd timers)!
+
+### Interactive Mode
+
+When you want full control:
 
 ```bash
-# Commands (no prefix)
-standup            # Interactive menu (default)
-standup standup    # Create new standup entry
+standup interactive    # or: standup -i
+```
+
+### Other Commands
+
+```bash
 standup stats      # View statistics
 standup search     # Search past standups
 standup review     # View weekly summary
 
-# Flags (-- prefix with short options)
+# Flags
 standup --help     # -h  Show help
-standup --version  # -v  Show version
+standup --version  # -v  Show version (v2.0.0)
 standup --migrate  # -m  Migrate data from old location
 ```
 
@@ -78,15 +94,15 @@ bun run review     # Weekly review
 
 ## ⚙️ Configuration
 
-Create a `config.json` file in the project directory to customize behavior:
+The tool auto-creates `~/.standup-cli/config.json` on first run with sensible defaults.
+
+### Basic Configuration
 
 ```json
 {
   "gitScanPath": "/path/to/your/repositories",
   "authorFilter": "Your Name",
-  "standupDir": "/path/to/standup/storage",
-  "streakFile": "/path/to/streak.json",
-  "remindersFile": "/path/to/reminders.json"
+  "enableAI": false
 }
 ```
 
@@ -98,14 +114,64 @@ Create a `config.json` file in the project directory to customize behavior:
 | `authorFilter` | Git config user.name | Filter commits by author name/email |
 | `excludeRepos` | `[]` | Array of repository names to exclude from scanning |
 | `skipMergeCommits` | `false` | Skip merge commits in git log |
-| `customQuestions` | Default questions | Customize standup questions (see below) |
+| `enableAI` | `false` | **Enable AI-powered summaries (requires Ollama)** |
+| `customQuestions` | Default questions | Customize standup questions (interactive mode) |
 | `standupDir` | `~/.standup-cli/standups` | Directory for standup markdown files |
 | `streakFile` | `~/.standup-cli/streak.json` | Path to streak tracking file |
 | `remindersFile` | `~/.standup-cli/reminders.json` | Path to reminder state file |
 
-**Note:** If no `config.json` exists, the tool will automatically use your git username for author filtering and sensible defaults for all paths.
+**Note:** Config is auto-created on first run. Edit `~/.standup-cli/config.json` to customize.
 
 See `config.example.json` for a full example configuration.
+
+## 🤖 AI Mode (Optional)
+
+### Enable AI-Powered Summaries
+
+1. **Install Ollama:**
+   ```bash
+   curl -fsSL https://ollama.com/install.sh | sh
+   ```
+
+2. **Pull a model:**
+   ```bash
+   ollama pull qwen2.5:7b   # Recommended: fast & smart
+   # or: ollama pull llama3.2:8b
+   ```
+
+3. **Enable in config:**
+   ```json
+   {
+     "enableAI": true
+   }
+   ```
+
+### AI vs Simple Mode
+
+| Feature | Simple Mode (Default) | AI Mode (Optional) |
+|---------|----------------------|-------------------|
+| **Setup** | None - works out-of-box | Requires Ollama |
+| **Speed** | Instant | ~2-5 seconds |
+| **Quality** | Good - pattern-based | Excellent - contextual |
+| **Mood** | Emoji based on commit types | Intelligent analysis |
+| **Accomplishments** | Cleaned commit messages | Natural language summaries |
+| **Context** | Basic patterns | Time-aware, multi-repo insights |
+| **Cost** | Free | Free (local LLM) |
+
+**Both modes work great!** Simple mode is perfect for most users. AI mode adds polish and context.
+
+### Environment Variables
+
+```bash
+# Customize AI model (if AI enabled)
+export OLLAMA_MODEL="llama3.2:8b"
+
+# Use remote Ollama instance
+export OLLAMA_API_URL="http://192.168.1.10:11434"
+
+# Debug mode
+export DEBUG=true
+```
 
 ### Custom Questions
 
@@ -151,12 +217,19 @@ Customize your standup questions to match your team's workflow:
 
 ## 📋 Standup Flow
 
+### Auto Mode (Default)
+1. **Auto Time Detection** - Smart range (yesterday, or Friday if Monday)
+2. **Git Scanning** - Scans repos, filters by author, shows timestamps
+3. **AI Summary** - Generates mood, accomplishments, blockers, plan
+4. **Save & Copy** - Markdown file + clipboard, updates streak
+
+### Interactive Mode
 1. **Streak Display** - Shows your current streak to motivate consistency
 2. **Mood Selection** - Choose from preset emojis or enter custom mood
 3. **Git Commit Scanning** (Optional)
-   - Configurable time range (since yesterday, Friday, N days ago)
+   - Smart time ranges ("Since Friday", "Since Monday", etc.)
    - Grouped or flat display format
-   - Filters by your git author name
+   - Readable timestamps (e.g., "Sunday 23 November 2025 14:30")
    - Shows unpushed commits
 4. **Accomplishments** - Pre-filled from commits or manually entered
 5. **Blockers** - Multi-line input with confirmation
@@ -277,4 +350,3 @@ Built with:
 
 ---
 
-Made with ❤️ for better daily standups
