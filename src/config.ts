@@ -83,6 +83,7 @@ export async function loadConfig(): Promise<StandupConfig> {
   }
 
   let fileConfig: Partial<StandupConfig> = {};
+  let configFileCreated = false;
 
   // Try to load config from file
   if (existsSync(CONFIG_FILE)) {
@@ -92,6 +93,9 @@ export async function loadConfig(): Promise<StandupConfig> {
     } catch (error) {
       console.warn(`Warning: Failed to parse config.json, using defaults. Error: ${error}`);
     }
+  } else {
+    // Config file doesn't exist - we'll create it with defaults
+    configFileCreated = true;
   }
 
   // Get git user name as default author filter
@@ -127,7 +131,73 @@ export async function loadConfig(): Promise<StandupConfig> {
     remindersFile: fileConfig.remindersFile ?? DEFAULT_REMINDERS_FILE,
   };
 
+  // Create default config file if it didn't exist
+  if (configFileCreated) {
+    await createDefaultConfigFile(cachedConfig);
+  }
+
   return cachedConfig;
+}
+
+/**
+ * Create a default config file with helpful comments
+ */
+async function createDefaultConfigFile(config: StandupConfig): Promise<void> {
+  try {
+    // Ensure directory exists
+    const { mkdirSync } = await import('fs');
+    const { dirname } = await import('path');
+
+    const configDir = dirname(CONFIG_FILE);
+    if (!existsSync(configDir)) {
+      mkdirSync(configDir, { recursive: true });
+    }
+
+    // Create config with comments (as a string to preserve formatting)
+    const configContent = `{
+  // Path to scan for git repositories
+  "gitScanPath": "${config.gitScanPath}",
+
+  // Git author to filter commits by (auto-detected: ${config.authorFilter || 'none'})
+  "authorFilter": ${config.authorFilter ? `"${config.authorFilter}"` : 'null'},
+
+  // Repository names to exclude from scanning
+  "excludeRepos": [],
+
+  // Skip merge commits in git log
+  "skipMergeCommits": false,
+
+  // Enable AI-powered summaries (requires Ollama installed)
+  // To enable: 1) Install Ollama, 2) Run 'ollama pull qwen2.5:7b', 3) Set to true
+  "enableAI": false
+}`;
+
+    // Write to temp file without comments, then inform user
+    const configJson = {
+      gitScanPath: config.gitScanPath,
+      authorFilter: config.authorFilter,
+      excludeRepos: [],
+      skipMergeCommits: false,
+      enableAI: false,
+    };
+
+    await Bun.write(CONFIG_FILE, JSON.stringify(configJson, null, 2));
+
+    // Store that we created it so we can show a message
+    (globalThis as any).__configFileCreated = true;
+  } catch (error) {
+    // Silently fail - config will work from memory
+    if (process.env.DEBUG === 'true') {
+      console.error('Failed to create default config:', error);
+    }
+  }
+}
+
+/**
+ * Check if config file was just created and show helpful message
+ */
+export function wasConfigFileCreated(): boolean {
+  return (globalThis as any).__configFileCreated === true;
 }
 
 /**

@@ -13,7 +13,7 @@ import {
   commitsToAccomplishments,
 } from './gitUtils';
 import type { GitAggregationResult } from './types';
-import { loadConfig } from './config';
+import { loadConfig, wasConfigFileCreated } from './config';
 import { migrate, promptMigrationIfNeeded } from './migrate';
 import {
   checkGitInstalled,
@@ -292,6 +292,15 @@ async function confirmAnswer(question: string, answer: string): Promise<'yes' | 
 }
 
 async function runAutoStandup() {
+  // Show helpful message if config was just created
+  if (wasConfigFileCreated()) {
+    const configPath = join(process.env.HOME || '~', '.standup-cli', 'config.json');
+    console.log(pc.cyan('ℹ️  Created default config file'));
+    console.log(pc.dim(`   Location: ${configPath}`));
+    console.log(pc.dim(`   To enable AI: Set "enableAI": true and install Ollama`));
+    console.log('');
+  }
+
   // Check if standup for today already exists
   const today = format(new Date(), 'yyyy-MM-dd');
   const todayFile = join(STANDUP_DIR, `${today}.md`);
