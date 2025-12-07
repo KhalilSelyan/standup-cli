@@ -69,12 +69,15 @@ Generate a standup with these sections:
    - "⚡ Multi-tasking across projects" (multiple repos)
    Be creative but professional. One emoji + short phrase.
 
-2. **Accomplishments**: Transform commits into natural, conversational accomplishments.
-   - Combine related commits
-   - Explain WHY and WHAT, not just technical details
+2. **Accomplishments**: Transform commits into detailed, impressive accomplishments that showcase the breadth and depth of work.
+   - Generate 5-10 accomplishment items (more items for more commits)
+   - Group by logical feature/area but DON'T over-consolidate - show the variety of work
+   - Be specific about technical details and what was actually changed
+   - Explain WHAT was done, WHY it matters, and the IMPACT
    - Use past tense, active voice
-   - Be specific about impact
-   Example: Instead of "Added timestamps", say "Added human-readable timestamps to git commits so team can see when work was done"
+   - Include repository names when working across multiple repos
+   - Make the developer look productive and skilled
+   Example: Instead of "Fixed TypeScript errors", say "Fixed several TypeScript errors across multiple repositories to improve code quality and type safety"
 
 3. **Blockers**: Analyze commits for potential issues:
    - Lots of fixes = might be dealing with technical debt
@@ -94,13 +97,17 @@ Generate a standup with these sections:
 Format as JSON ONLY:
 {
   "mood": "emoji + short phrase",
-  "accomplishments": ["item1", "item2"],
+  "accomplishments": ["item1", "item2", "item3", "item4", "item5", ...],
   "blockers": ["item1"] or ["None"],
-  "todaysPlan": ["item1"],
+  "todaysPlan": ["item1", "item2"],
   "gitSummary": "one-line summary"
 }
 
-IMPORTANT: Return ONLY the JSON object. Be conversational but professional.`;
+IMPORTANT:
+- Return ONLY the JSON object
+- Generate 5-10 accomplishments to showcase the full scope of work
+- Be conversational but professional
+- Don't over-consolidate - show the variety and volume of contributions`;
 
   if (DEBUG) {
     console.log('[DEBUG] Ollama API URL:', OLLAMA_API_URL);
@@ -121,7 +128,7 @@ IMPORTANT: Return ONLY the JSON object. Be conversational but professional.`;
         stream: false,
         options: {
           temperature: 0.7,
-          num_predict: 512,
+          num_predict: 1024,
         },
       }),
     });
