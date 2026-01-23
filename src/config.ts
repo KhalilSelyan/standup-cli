@@ -33,6 +33,8 @@ export interface StandupConfig {
   standupDir: string;
   streakFile: string;
   remindersFile: string;
+  retroDir?: string; // Directory for weekly retrospectives
+  retroDay?: number; // Day of week for retro generation (0=Sun, 1=Mon, ..., 5=Fri, 6=Sat). Default: 5 (Friday)
 }
 
 // Use home directory for default paths (works in both dev and compiled modes)
@@ -119,6 +121,7 @@ export async function loadConfig(): Promise<StandupConfig> {
   };
 
   // Merge with defaults
+  const standupDir = fileConfig.standupDir ?? DEFAULT_STANDUP_DIR;
   cachedConfig = {
     gitScanPath: fileConfig.gitScanPath ?? DEFAULT_SCAN_PATH,
     authorFilter: fileConfig.authorFilter ?? gitUserName ?? undefined,
@@ -126,9 +129,11 @@ export async function loadConfig(): Promise<StandupConfig> {
     skipMergeCommits: fileConfig.skipMergeCommits ?? false,
     customQuestions: fileConfig.customQuestions ?? defaultCustomQuestions,
     enableAI: fileConfig.enableAI ?? false, // AI is opt-in
-    standupDir: fileConfig.standupDir ?? DEFAULT_STANDUP_DIR,
+    standupDir,
     streakFile: fileConfig.streakFile ?? DEFAULT_STREAK_FILE,
     remindersFile: fileConfig.remindersFile ?? DEFAULT_REMINDERS_FILE,
+    retroDir: fileConfig.retroDir ?? join(STANDUP_BASE_DIR, 'retros'),
+    retroDay: fileConfig.retroDay ?? 5, // Default: Friday
   };
 
   // Create default config file if it didn't exist
