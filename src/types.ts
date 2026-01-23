@@ -46,3 +46,17 @@ export interface ReminderState {
   dismissedToday: boolean;
   lastNotification: string;
 }
+
+export interface RetroData {
+  weekStart: string;
+  weekEnd: string;
+  weekNumber: number;
+  year: number;
+  totalDays: number;
+  moods: string[];
+  themes: string[];
+  highlights: string[];
+  challenges: string[];
+  lessonsLearned: string[];
+  nextWeekFocus: string[];
+}
