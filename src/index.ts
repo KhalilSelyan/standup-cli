@@ -31,6 +31,15 @@ import {
   suggestTodaysPlan
 } from './aiSummarizer';
 import { generateSimpleSummary } from './simpleSummarizer';
+import {
+  runAutoRetro,
+  isRetroDay,
+  retroExistsForWeek,
+  getWeekStandups,
+  generateWeeklyRetro,
+  generateSimpleRetro,
+  saveWeeklyRetro,
+} from './weeklyRetro';
 
 // Load config at startup
 const config = await loadConfig();
@@ -498,6 +507,18 @@ ${gitActivitySection}
     }
 
     console.log(pc.dim(`Saved to: ${filepath}`));
+
+    // Check if it's Friday and generate weekly retro
+    if (await isRetroDay()) {
+      console.log('');
+      const retroResult = await runAutoRetro();
+      if (retroResult.success) {
+        console.log(pc.green(`✓ ${retroResult.message}`));
+        console.log(pc.dim(`Saved to: ${retroResult.filepath}`));
+      } else if (retroResult.message !== 'Not retro day') {
+        console.log(pc.dim(`ℹ️  Weekly retro: ${retroResult.message}`));
+      }
+    }
 
   } catch (error) {
     console.error(pc.red('✗ Failed to generate standup'));
@@ -1359,6 +1380,100 @@ async function searchStandups() {
   await pressAnyKey('Press Enter to close...');
 }
 
+async function runWeeklyRetro() {
+  console.clear();
+  p.intro(pc.bgMagenta(pc.black(' 🔄 Weekly Retrospective ')));
+
+  // Check if retro already exists for this week
+  if (await retroExistsForWeek()) {
+    const overwrite = await p.confirm({
+      message: 'A retrospective already exists for this week. Generate a new one?',
+      initialValue: false,
+    });
+
+    if (p.isCancel(overwrite) || !overwrite) {
+      p.outro('Keeping existing retrospective.');
+      return;
+    }
+  }
+
+  // Get this week's standups
+  const spinner = p.spinner();
+  spinner.start(pc.cyan('Gathering standups from this week...'));
+
+  const standups = await getWeekStandups();
+
+  if (standups.length === 0) {
+    spinner.stop(pc.yellow('No standups found'));
+    p.note('No standups found for this week (Mon-Fri).', pc.yellow('Empty Week'));
+    p.outro('Complete some standups first to generate a retrospective.');
+    await pressAnyKey('Press Enter to close...');
+    return;
+  }
+
+  spinner.stop(pc.green(`Found ${standups.length} standup(s)`));
+
+  // Show preview of what we found
+  const preview = standups.map(s => `  ${pc.cyan(s.dayOfWeek)} (${s.date}): ${s.mood}`).join('\n');
+  p.note(preview, pc.blue('This week\'s standups'));
+
+  // Generate summary
+  let summary;
+  let usedAI = false;
+
+  if (config.enableAI) {
+    const ollamaReady = await isOllamaAvailable();
+    if (ollamaReady) {
+      spinner.start(pc.cyan('🤖 AI is analyzing your week...'));
+      try {
+        summary = await generateWeeklyRetro(standups);
+        if (summary) {
+          usedAI = true;
+          spinner.stop(pc.green('✓ AI analysis complete'));
+        } else {
+          spinner.stop(pc.yellow('⚠️  AI analysis failed, using simple summary'));
+        }
+      } catch (error) {
+        spinner.stop(pc.yellow('⚠️  AI failed, using simple summary'));
+      }
+    } else {
+      p.log.warn(pc.yellow('Ollama not available, using simple summary'));
+    }
+  }
+
+  if (!summary) {
+    summary = generateSimpleRetro(standups);
+  }
+
+  // Save the retro
+  spinner.start(pc.cyan('Saving retrospective...'));
+  const filepath = await saveWeeklyRetro(standups, summary);
+  spinner.stop(pc.green('✓ Retrospective saved!'));
+
+  // Show summary
+  const aiStatus = usedAI ? pc.magenta(' (AI-powered)') : '';
+  console.log('');
+  p.note(
+    pc.bold(pc.blue('🎯 Key Themes\n')) +
+    summary.themes.map(t => `  • ${t}`).join('\n') + '\n\n' +
+    pc.bold(pc.green('🌟 Highlights\n')) +
+    summary.highlights.slice(0, 3).map(h => `  • ${h}`).join('\n') + '\n\n' +
+    pc.bold(pc.yellow('🚧 Challenges\n')) +
+    summary.challenges.slice(0, 2).map(c => `  • ${c}`).join('\n') + '\n\n' +
+    pc.bold(pc.cyan('🔮 Next Week Focus\n')) +
+    summary.nextWeekFocus.map(f => `  • ${f}`).join('\n'),
+    pc.magenta(`Weekly Retrospective Summary${aiStatus}`)
+  );
+
+  console.log('');
+  p.note(pc.dim(filepath), pc.cyan('📁 Saved to'));
+  console.log('');
+
+  p.outro(pc.bgGreen(pc.black(' Great week! Time to reflect and grow 🌱 ')));
+
+  await pressAnyKey('Press Enter to close...');
+}
+
 async function weeklyReview() {
   console.clear();
   p.intro(pc.bgGreen(pc.black(' 📅 Weekly Review ')));
@@ -1420,6 +1535,7 @@ function showHelp() {
   p.log.step(pc.bold(pc.yellow('Commands:')));
   console.log(`  ${pc.cyan('•')} ${pc.bold('(no args)')}          ${pc.dim('AI-powered auto standup (non-interactive)')}`);
   console.log(`  ${pc.cyan('•')} ${pc.bold('interactive, -i')}    ${pc.dim('Interactive standup with prompts')}`);
+  console.log(`  ${pc.cyan('•')} ${pc.bold('retro')}              ${pc.dim('Generate weekly retrospective')}`);
   console.log(`  ${pc.cyan('•')} ${pc.bold('stats')}              ${pc.dim('View standup statistics and streaks')}`);
   console.log(`  ${pc.cyan('•')} ${pc.bold('search')}             ${pc.dim('Search past standups by keyword or date')}`);
   console.log(`  ${pc.cyan('•')} ${pc.bold('review')}             ${pc.dim('View weekly summary of standups')}`);
@@ -1434,6 +1550,7 @@ function showHelp() {
   p.log.step(pc.bold(pc.green('Examples:')));
   console.log(`  ${pc.gray('$')} ${pc.cyan('standup')}                ${pc.dim('→ AI auto mode (default)')}`);
   console.log(`  ${pc.gray('$')} ${pc.cyan('standup interactive')}    ${pc.dim('→ Interactive prompts')}`);
+  console.log(`  ${pc.gray('$')} ${pc.cyan('standup retro')}          ${pc.dim('→ Generate weekly retro')}`);
   console.log(`  ${pc.gray('$')} ${pc.cyan('standup stats')}          ${pc.dim('→ View statistics')}`);
   console.log(`  ${pc.gray('$')} ${pc.cyan('standup --version')}      ${pc.dim('→ Show version')}`);
   console.log('');
@@ -1460,8 +1577,9 @@ async function showMenu() {
     message: pc.bold('What would you like to do?'),
     options: [
       { value: 'standup', label: pc.green('✍️  Run daily standup'), hint: 'Create a new standup entry' },
+      { value: 'retro', label: pc.magenta('🔄 Weekly retrospective'), hint: 'Generate AI-powered week summary' },
       { value: 'review', label: pc.cyan('📅 Weekly review'), hint: 'See this week\'s standups' },
-      { value: 'stats', label: pc.magenta('📊 View statistics'), hint: 'Streaks, mood distribution, etc.' },
+      { value: 'stats', label: pc.yellow('📊 View statistics'), hint: 'Streaks, mood distribution, etc.' },
       { value: 'search', label: pc.blue('🔍 Search standups'), hint: 'Find past entries' },
       { value: 'exit', label: pc.dim('👋 Exit'), hint: 'Close the CLI' },
     ],
@@ -1510,6 +1628,9 @@ if (command) {
     case '-i':
       // Interactive mode (old default behavior)
       await runStandup();
+      break;
+    case 'retro':
+      await runWeeklyRetro();
       break;
     case 'stats':
       await showStats();
